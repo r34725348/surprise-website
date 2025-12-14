@@ -1,5 +1,4 @@
 // ===== GLOBAL VARIABLES =====
-let currentPhase = 1;
 let audioContext;
 let analyser;
 let audioSource;
@@ -8,10 +7,22 @@ let animationFrameId;
 let timerPopupTimeout;
 let reactionPopupTimeout;
 let audioPlaying = false;
-let audioInitialized = false;
 
 const canvas = document.getElementById('waveform-canvas');
 const ctx = canvas.getContext('2d');
+
+// ===== CONFIGURATION (Everything hardcoded now) =====
+const CONFIG = {
+    MASTER_PASSWORD: '145ridhimehta',  // Your password here
+    AUDIO_URL: '/audio/surprise.mp3',  // Audio file in public/audio/
+    PHONE_NUMBERS: [
+        '+91XXXXXXXXXX',  // Card 1
+        '+91XXXXXXXXXX',  // Card 2
+        '+91XXXXXXXXXX',  // Card 3
+        '+91XXXXXXXXXX',  // Card 4
+        '+91XXXXXXXXXX'   // Card 5
+    ]
+};
 
 // ===== INITIALIZATION =====
 document.addEventListener('DOMContentLoaded', () => {
@@ -167,6 +178,37 @@ function startPhase4() {
     });
 }
 
+// ===== SIMPLE PASSWORD CHECK =====
+async function authenticatePassword() {
+    const passwordInput = document.getElementById('password-input');
+    const authMessage = document.getElementById('auth-message');
+    const password = passwordInput.value.trim();
+    
+    console.log('Password attempt:', password);
+    
+    if (!password) {
+        showAuthMessage('Please enter a password', 'error');
+        return;
+    }
+    
+    // Simple password check
+    if (password === CONFIG.MASTER_PASSWORD) {
+        showAuthMessage('Password verified! Unlocking your surprise...', 'success');
+        
+        // Clear any pending timers
+        if (reactionPopupTimeout) clearTimeout(reactionPopupTimeout);
+        
+        // Transition to Phase 5 after delay
+        setTimeout(() => {
+            transitionToPhase('phase-4', 'phase-5', startPhase5);
+        }, 1500);
+    } else {
+        showAuthMessage('Oops! Try Again!!', 'error');
+        passwordInput.value = '';
+        passwordInput.focus();
+    }
+}
+
 // ===== PHASE 5: AUDIO SURPRISE =====
 async function startPhase5() {
     const successAnimation = document.getElementById('success-animation');
@@ -194,12 +236,8 @@ async function startPhase5() {
 
 async function setupAudioPlayer() {
     try {
-        // Get audio URL from server (secured by password)
-        const audioUrl = await getAudioUrl();
-        
-        if (!audioUrl) {
-            throw new Error('No audio URL received');
-        }
+        // Get audio URL directly from config
+        const audioUrl = CONFIG.AUDIO_URL;
         
         // Setup audio element
         audioElement = document.getElementById('hidden-audio');
@@ -220,20 +258,18 @@ async function setupAudioPlayer() {
             showAuthMessage('Error loading audio. Please try again.', 'error');
         });
         
-        audioInitialized = true;
-        
     } catch (error) {
         console.error('Error setting up audio:', error);
         showAuthMessage('Unable to load audio. Please try again.', 'error');
         
         // Fallback: Try to use direct path if available
-        const fallbackUrl = '/audio/surprise.mp3';
         audioElement = document.getElementById('hidden-audio');
-        audioElement.src = fallbackUrl;
+        audioElement.src = '/audio/surprise.mp3';
         setupAudioControls();
     }
 }
 
+// ===== AUDIO CONTROLS & VISUALIZATION =====
 function setupAudioControls() {
     const playPauseBtn = document.getElementById('play-pause-btn');
     const replayBtn = document.getElementById('replay-btn');
@@ -405,7 +441,7 @@ function togglePlayPause() {
     const playIcon = playPauseBtn.querySelector('i');
     const btnText = playPauseBtn.querySelector('.btn-text');
     
-    if (!audioElement || !audioInitialized) return;
+    if (!audioElement) return;
     
     // Resume audio context if suspended (required for autoplay policies)
     if (audioContext && audioContext.state === 'suspended') {
@@ -453,19 +489,10 @@ function togglePlayPause() {
 
 function downloadAudio(url) {
     try {
-        // Extract filename from URL or use default
-        let filename = 'personal-message.mp3';
-        const urlParts = url.split('/');
-        const lastPart = urlParts[urlParts.length - 1];
-        
-        if (lastPart && lastPart.includes('.mp3')) {
-            filename = lastPart;
-        }
-        
         // Create temporary link for download
         const link = document.createElement('a');
         link.href = url;
-        link.download = filename;
+        link.download = 'personal-message-for-you.mp3';
         link.style.display = 'none';
         
         document.body.appendChild(link);
@@ -485,9 +512,12 @@ function downloadAudio(url) {
 function startPhase6() {
     const cardBoxes = document.querySelectorAll('.card-box');
     
-    cardBoxes.forEach(box => {
+    // Update phone numbers in HTML
+    cardBoxes.forEach((box, index) => {
+        const phoneNumber = CONFIG.PHONE_NUMBERS[index] || '+91XXXXXXXXXX';
+        box.setAttribute('data-number', phoneNumber);
+        
         box.addEventListener('click', () => {
-            const phoneNumber = box.getAttribute('data-number');
             if (phoneNumber && phoneNumber !== '+91XXXXXXXXXX') {
                 // Confirm before calling
                 if (confirm(`Call ${phoneNumber}?`)) {
@@ -497,6 +527,136 @@ function startPhase6() {
                 showToast('Phone number not configured for this card.');
             }
         });
+    });
+}
+
+// ===== REACTION POPUP =====
+function showReactionPopup() {
+    const reactionPopup = document.getElementById('reaction-popup');
+    const submitButton = document.getElementById('submit-reaction');
+    const skipButton = document.getElementById('skip-reaction');
+    const closeButton = document.getElementById('close-reaction');
+    const reactionText = document.getElementById('reaction-text');
+    const charCount = document.getElementById('char-count');
+    
+    reactionPopup.classList.remove('hidden');
+    
+    // Update character count
+    reactionText.addEventListener('input', () => {
+        charCount.textContent = reactionText.value.length;
+    });
+    
+    // Submit reaction
+    submitButton.addEventListener('click', async () => {
+        const text = reactionText.value.trim();
+        
+        if (text) {
+            saveReactionLocal(text);
+        }
+        
+        reactionPopup.classList.add('hidden');
+    });
+    
+    // Skip reaction
+    skipButton.addEventListener('click', () => {
+        reactionPopup.classList.add('hidden');
+    });
+    
+    // Close button
+    if (closeButton) {
+        closeButton.addEventListener('click', () => {
+            reactionPopup.classList.add('hidden');
+        });
+    }
+}
+
+// ===== SIMPLE REACTION STORAGE (LocalStorage) =====
+function saveReactionLocal(text) {
+    try {
+        // Save to localStorage
+        const reactions = JSON.parse(localStorage.getItem('surpriseReactions') || '[]');
+        reactions.push({
+            text: text.trim(),
+            timestamp: new Date().toISOString(),
+            date: new Date().toLocaleString()
+        });
+        
+        localStorage.setItem('surpriseReactions', JSON.stringify(reactions));
+        
+        // Log to console for debugging
+        console.log('Reaction saved:', {
+            text: text.substring(0, 50) + (text.length > 50 ? '...' : ''),
+            timestamp: new Date().toISOString(),
+            totalReactions: reactions.length
+        });
+        
+        // Optionally, you can view all reactions in console
+        // console.log('All reactions:', reactions);
+        
+    } catch (error) {
+        console.error('Error saving reaction:', error);
+    }
+}
+
+// Helper function to view saved reactions (for debugging)
+function viewSavedReactions() {
+    const reactions = JSON.parse(localStorage.getItem('surpriseReactions') || '[]');
+    console.log('Total reactions saved:', reactions.length);
+    reactions.forEach((r, i) => {
+        console.log(`${i + 1}. ${r.date}: ${r.text.substring(0, 100)}...`);
+    });
+    return reactions;
+}
+
+// ===== TIMER POPUP =====
+function startTimerPopup() {
+    timerPopupTimeout = setTimeout(showTimerPopup, 4 * 60 * 1000); // 4 minutes
+}
+
+function showTimerPopup() {
+    const timerPopup = document.getElementById('timer-popup');
+    const hearAgainBtn = document.getElementById('hear-again');
+    const callNowBtn = document.getElementById('call-now');
+    const hearThenCallBtn = document.getElementById('hear-then-call');
+    
+    timerPopup.classList.remove('hidden');
+    
+    // Remove existing listeners to prevent duplicates
+    const newHearAgainBtn = hearAgainBtn.cloneNode(true);
+    const newCallNowBtn = callNowBtn.cloneNode(true);
+    const newHearThenCallBtn = hearThenCallBtn.cloneNode(true);
+    
+    hearAgainBtn.parentNode.replaceChild(newHearAgainBtn, hearAgainBtn);
+    callNowBtn.parentNode.replaceChild(newCallNowBtn, callNowBtn);
+    hearThenCallBtn.parentNode.replaceChild(newHearThenCallBtn, hearThenCallBtn);
+    
+    // Listen Again
+    newHearAgainBtn.addEventListener('click', () => {
+        timerPopup.classList.add('hidden');
+        startTimerPopup(); // Restart timer
+    });
+    
+    // Call Now
+    newCallNowBtn.addEventListener('click', () => {
+        timerPopup.classList.add('hidden');
+        
+        // Navigate to call page
+        transitionToPhase('phase-5', 'phase-6', startPhase6);
+    });
+    
+    // Listen Then Call
+    newHearThenCallBtn.addEventListener('click', () => {
+        timerPopup.classList.add('hidden');
+        
+        // Replay audio
+        if (audioElement) {
+            audioElement.currentTime = 0;
+            if (!audioPlaying) {
+                togglePlayPause();
+            }
+        }
+        
+        startTimerPopup(); // Restart timer
     });
 }
 
@@ -566,231 +726,6 @@ function transitionToPhase(fromId, toId, callback) {
     }, 500);
 }
 
-// ===== REACTION POPUP =====
-function showReactionPopup() {
-    const reactionPopup = document.getElementById('reaction-popup');
-    const submitButton = document.getElementById('submit-reaction');
-    const skipButton = document.getElementById('skip-reaction');
-    const closeButton = document.getElementById('close-reaction');
-    const reactionText = document.getElementById('reaction-text');
-    const charCount = document.getElementById('char-count');
-    
-    reactionPopup.classList.remove('hidden');
-    
-    // Update character count
-    reactionText.addEventListener('input', () => {
-        charCount.textContent = reactionText.value.length;
-    });
-    
-    // Submit reaction
-    submitButton.addEventListener('click', async () => {
-        const text = reactionText.value.trim();
-        
-        if (text) {
-            await saveReaction(text);
-        }
-        
-        reactionPopup.classList.add('hidden');
-    });
-    
-    // Skip reaction
-    skipButton.addEventListener('click', () => {
-        reactionPopup.classList.add('hidden');
-    });
-    
-    // Close button
-    if (closeButton) {
-        closeButton.addEventListener('click', () => {
-            reactionPopup.classList.add('hidden');
-        });
-    }
-}
-
-// ===== PASSWORD AUTHENTICATION =====
-async function authenticatePassword() {
-    const passwordInput = document.getElementById('password-input');
-    const authMessage = document.getElementById('auth-message');
-    const password = passwordInput.value.trim();
-    
-    if (!password) {
-        showAuthMessage('Please enter a password', 'error');
-        return;
-    }
-    
-    try {
-        const response = await fetch('/.netlify/functions/authenticate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ password })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            showAuthMessage('Password verified! Unlocking your surprise...', 'success');
-            
-            // Clear any pending timers
-            if (reactionPopupTimeout) clearTimeout(reactionPopupTimeout);
-            
-            // Transition to Phase 5 after delay
-            setTimeout(() => {
-                transitionToPhase('phase-4', 'phase-5', startPhase5);
-            }, 1500);
-        } else {
-            showAuthMessage('Oops! Try Again!!', 'error');
-            passwordInput.value = '';
-            passwordInput.focus();
-        }
-    } catch (error) {
-        console.error('Authentication error:', error);
-        showAuthMessage('An error occurred. Please try again.', 'error');
-    }
-}
-
-async function getAudioUrl() {
-    try {
-        const response = await fetch('/.netlify/functions/authenticate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ getAudio: true })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success && data.audioUrl) {
-            return data.audioUrl;
-        } else {
-            throw new Error('No audio URL received');
-        }
-    } catch (error) {
-        console.error('Error getting audio URL:', error);
-        throw error;
-    }
-}
-
-// ===== REACTION SAVING =====
-async function saveReaction(text) {
-    try {
-        const response = await fetch('/.netlify/functions/save-reaction', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ 
-                reaction: text,
-                timestamp: new Date().toISOString()
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            console.log('Reaction saved successfully');
-        } else {
-            console.warn('Failed to save reaction:', data.error);
-        }
-    } catch (error) {
-        console.error('Error saving reaction:', error);
-    }
-}
-
-// ===== SUCCESS ANIMATION =====
-function triggerSuccessAnimation() {
-    // Create confetti effect using CSS particles
-    const particles = document.querySelectorAll('.particle');
-    particles.forEach(particle => {
-        particle.style.animation = 'float-particle 3s infinite';
-    });
-    
-    // Add some random confetti
-    setTimeout(() => {
-        createConfetti();
-    }, 500);
-}
-
-function createConfetti() {
-    const colors = ['#667eea', '#764ba2', '#4facfe', '#00f2fe', '#43e97b'];
-    const container = document.querySelector('.success-animation');
-    
-    for (let i = 0; i < 20; i++) {
-        const confetti = document.createElement('div');
-        confetti.className = 'confetti';
-        confetti.style.cssText = `
-            position: absolute;
-            width: 10px;
-            height: 10px;
-            background: ${colors[Math.floor(Math.random() * colors.length)]};
-            border-radius: 2px;
-            top: 50%;
-            left: 50%;
-            animation: confetti-fall ${1 + Math.random()}s ease-in forwards;
-            transform: rotate(${Math.random() * 360}deg);
-        `;
-        
-        container.appendChild(confetti);
-        
-        // Remove after animation
-        setTimeout(() => confetti.remove(), 2000);
-    }
-}
-
-// ===== TIMER POPUP =====
-function startTimerPopup() {
-    timerPopupTimeout = setTimeout(showTimerPopup, 4 * 60 * 1000); // 4 minutes
-}
-
-function showTimerPopup() {
-    const timerPopup = document.getElementById('timer-popup');
-    const hearAgainBtn = document.getElementById('hear-again');
-    const callNowBtn = document.getElementById('call-now');
-    const hearThenCallBtn = document.getElementById('hear-then-call');
-    
-    timerPopup.classList.remove('hidden');
-    
-    // Remove existing listeners to prevent duplicates
-    const newHearAgainBtn = hearAgainBtn.cloneNode(true);
-    const newCallNowBtn = callNowBtn.cloneNode(true);
-    const newHearThenCallBtn = hearThenCallBtn.cloneNode(true);
-    
-    hearAgainBtn.parentNode.replaceChild(newHearAgainBtn, hearAgainBtn);
-    callNowBtn.parentNode.replaceChild(newCallNowBtn, callNowBtn);
-    hearThenCallBtn.parentNode.replaceChild(newHearThenCallBtn, hearThenCallBtn);
-    
-    // Listen Again
-    newHearAgainBtn.addEventListener('click', () => {
-        timerPopup.classList.add('hidden');
-        startTimerPopup(); // Restart timer
-    });
-    
-    // Call Now
-    newCallNowBtn.addEventListener('click', () => {
-        timerPopup.classList.add('hidden');
-        
-        // Navigate to call page
-        transitionToPhase('phase-5', 'phase-6', startPhase6);
-    });
-    
-    // Listen Then Call
-    newHearThenCallBtn.addEventListener('click', () => {
-        timerPopup.classList.add('hidden');
-        
-        // Replay audio
-        if (audioElement) {
-            audioElement.currentTime = 0;
-            if (!audioPlaying) {
-                togglePlayPause();
-            }
-        }
-        
-        startTimerPopup(); // Restart timer
-    });
-}
-
-// ===== UI HELPER FUNCTIONS =====
 function showAuthMessage(message, type) {
     const authMessage = document.getElementById('auth-message');
     authMessage.textContent = message;
@@ -841,6 +776,45 @@ function updateVolumeDisplay() {
     
     if (volumeSlider && volumeValue) {
         volumeValue.textContent = `${volumeSlider.value}%`;
+    }
+}
+
+function triggerSuccessAnimation() {
+    // Create confetti effect using CSS particles
+    const particles = document.querySelectorAll('.particle');
+    particles.forEach(particle => {
+        particle.style.animation = 'float-particle 3s infinite';
+    });
+    
+    // Add some random confetti
+    setTimeout(() => {
+        createConfetti();
+    }, 500);
+}
+
+function createConfetti() {
+    const colors = ['#667eea', '#764ba2', '#4facfe', '#00f2fe', '#43e97b'];
+    const container = document.querySelector('.success-animation');
+    
+    for (let i = 0; i < 20; i++) {
+        const confetti = document.createElement('div');
+        confetti.className = 'confetti';
+        confetti.style.cssText = `
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: ${colors[Math.floor(Math.random() * colors.length)]};
+            border-radius: 2px;
+            top: 50%;
+            left: 50%;
+            animation: confetti-fall ${1 + Math.random()}s ease-in forwards;
+            transform: rotate(${Math.random() * 360}deg);
+        `;
+        
+        container.appendChild(confetti);
+        
+        // Remove after animation
+        setTimeout(() => confetti.remove(), 2000);
     }
 }
 
@@ -933,3 +907,7 @@ style.textContent = `
     }
 `;
 document.head.appendChild(style);
+
+// For debugging: view all saved reactions
+// Uncomment this line to see reactions in console:
+// window.viewReactions = viewSavedReactions;
