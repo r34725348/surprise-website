@@ -1,7 +1,7 @@
-// We'll store reactions in Netlify's environment (simple approach)
-// For production, consider using Netlify Forms or a simple JSON file
+// save-reaction.js - Save user reactions with improved logging
+// Uses in-memory storage with logging to Netlify function logs
 
-let reactions = []; // In-memory storage (resets on cold start)
+let reactions = []; // In-memory storage (resets on cold start - okay for this use case)
 
 exports.handler = async (event, context) => {
     // CORS headers
@@ -21,21 +21,24 @@ exports.handler = async (event, context) => {
         };
     }
 
-    try {
-        // Only allow POST requests
-        if (event.httpMethod !== 'POST') {
-            return {
-                statusCode: 405,
-                headers,
-                body: JSON.stringify({ error: 'Method not allowed' })
-            };
-        }
+    // Only allow POST requests
+    if (event.httpMethod !== 'POST') {
+        return {
+            statusCode: 405,
+            headers,
+            body: JSON.stringify({ 
+                success: false, 
+                error: 'Method not allowed. Use POST.' 
+            })
+        };
+    }
 
+    try {
         // Parse request body
         const data = JSON.parse(event.body || '{}');
         const { reaction, timestamp } = data;
 
-        // Simple validation
+        // Validate reaction
         if (!reaction || typeof reaction !== 'string') {
             return {
                 statusCode: 400,
@@ -47,81 +50,89 @@ exports.handler = async (event, context) => {
             };
         }
 
-        // Create reaction object
+        // Trim and limit reaction length
+        const trimmedReaction = reaction.trim();
+        if (trimmedReaction.length === 0) {
+            return {
+                statusCode: 400,
+                headers,
+                body: JSON.stringify({ 
+                    success: false, 
+                    error: 'Reaction cannot be empty' 
+                })
+            };
+        }
+
+        // Limit reaction length (optional safety)
+        const limitedReaction = trimmedReaction.length > 1000 
+            ? trimmedReaction.substring(0, 1000) + '...' 
+            : trimmedReaction;
+
+        // Create reaction object with metadata
         const reactionData = {
-            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-            reaction: reaction.trim(),
+            id: Date.now().toString(36) + Math.random().toString(36).substr(2, 9),
+            reaction: limitedReaction,
             timestamp: timestamp || new Date().toISOString(),
             savedAt: new Date().toISOString(),
-            ip: event.headers['x-forwarded-for'] || event.headers['client-ip'] || 'unknown'
+            ip: event.headers['x-forwarded-for'] || event.headers['client-ip'] || 'unknown',
+            userAgent: event.headers['user-agent'] || 'unknown',
+            referer: event.headers.referer || 'unknown'
         };
 
         // Store in memory array
         reactions.push(reactionData);
         
-        // Log to console (Netlify will save these logs)
-        console.log('New reaction saved:', {
+        // Log to Netlify function logs (accessible in dashboard)
+        console.log('📝 New reaction saved:', {
             id: reactionData.id,
             timestamp: reactionData.timestamp,
             reactionLength: reactionData.reaction.length,
-            ip: reactionData.ip
+            ip: reactionData.ip,
+            preview: reactionData.reaction.length > 50 
+                ? reactionData.reaction.substring(0, 50) + '...' 
+                : reactionData.reaction
         });
 
-        // Keep only last 1000 reactions to prevent memory issues
-        if (reactions.length > 1000) {
-            reactions = reactions.slice(-1000);
+        // Keep only last 500 reactions to prevent memory issues
+        if (reactions.length > 500) {
+            reactions = reactions.slice(-500);
+            console.log(`📊 Reactions array trimmed to ${reactions.length} entries`);
         }
 
+        // Success response (no confirmation shown to user as per requirements)
         return {
             statusCode: 200,
             headers,
             body: JSON.stringify({ 
                 success: true, 
                 message: 'Reaction saved successfully',
-                id: reactionData.id
+                id: reactionData.id,
+                savedAt: reactionData.savedAt
             })
         };
 
     } catch (error) {
-        console.error('Error saving reaction:', error);
+        console.error('❌ Error saving reaction:', error);
         
         return {
             statusCode: 500,
             headers,
             body: JSON.stringify({ 
                 success: false, 
-                error: 'Failed to save reaction',
+                error: 'Failed to save reaction. Please try again.',
                 details: process.env.NODE_ENV === 'development' ? error.message : undefined
             })
         };
     }
 };
 
-// Alternative: Netlify Forms approach (uncomment if you want to use Netlify Forms)
-/*
-// In your HTML form:
-<form name="reactions" netlify netlify-honeypot="bot-field" hidden>
-  <input type="text" name="reaction" />
-  <input type="text" name="timestamp" />
-  <input type="text" name="userAgent" />
-</form>
+// Helper function to get all stored reactions (for debugging)
+exports.getReactions = () => {
+    return reactions;
+};
 
-// Then in JavaScript:
-async function saveReaction(text) {
-    const formData = new FormData();
-    formData.append('form-name', 'reactions');
-    formData.append('reaction', text);
-    formData.append('timestamp', new Date().toISOString());
-    formData.append('userAgent', navigator.userAgent);
-    
-    try {
-        await fetch('/', {
-            method: 'POST',
-            body: formData
-        });
-        console.log('Reaction saved via Netlify Forms');
-    } catch (error) {
-        console.error('Error saving reaction:', error);
-    }
-}
-*/
+// Helper function to clear reactions (for debugging)
+exports.clearReactions = () => {
+    reactions = [];
+    return { cleared: true, count: reactions.length };
+};
